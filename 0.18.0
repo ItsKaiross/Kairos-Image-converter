@@ -1,0 +1,7 @@
+Collecting pillow-heif
+  Downloading pillow_heif-1.4.0-cp312-cp312-win_amd64.whl.metadata (9.6 kB)
+Requirement already satisfied: pillow>=11.1.0 in C:\Users\markj\AppData\Roaming\Python\Python312\site-packages (from pillow-heif) (11.2.1)
+Downloading pillow_heif-1.4.0-cp312-cp312-win_amd64.whl (6.5 MB)
+   ---------------------------------------- 6.5/6.5 MB 20.0 MB/s  0:00:00
+Installing collected packages: pillow-heif
+Successfully installed pillow-heif-1.4.0

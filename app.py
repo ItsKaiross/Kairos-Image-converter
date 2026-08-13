@@ -12,6 +12,10 @@ register_heif_opener()
 FORMATS   = ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "HEIC", "ICO"]
 ICO_SIZES = [256, 128, 64, 48, 32, 16]
 
+APP_DIR   = os.path.dirname(os.path.abspath(__file__))
+ICON_ICO  = os.path.join(APP_DIR, "kairos icon.ico")
+ICON_PNG  = os.path.join(APP_DIR, "kairos icon.png")
+
 # ── palette ────────────────────────────────────────────────────────────────────
 BG        = "#0a0a12"
 SURFACE   = "#14141f"
@@ -263,10 +267,22 @@ class ImageConverterApp(TkinterDnD.Tk):
         self.geometry("880x640")
         self.minsize(640, 480)
         self.configure(bg=BG)
+        self._set_app_icon()
         self.cards: list[FileCard] = []
         self._converting    = False
         self._cancel_event  = threading.Event()
         self._build_ui()
+
+    def _set_app_icon(self):
+        try:
+            self.iconbitmap(ICON_ICO)
+        except Exception:
+            pass
+        try:
+            self._icon_img = PhotoImage(file=ICON_PNG)
+            self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
 
     # ── layout ─────────────────────────────────────────────────────────────────
     def _build_ui(self):

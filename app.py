@@ -1,7 +1,6 @@
 import os
 import threading
 import struct
-import io
 from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -10,20 +9,21 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
-FORMATS  = ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "HEIC", "ICO"]
+FORMATS   = ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "HEIC", "ICO"]
 ICO_SIZES = [256, 128, 64, 48, 32, 16]
 
 # ── palette ────────────────────────────────────────────────────────────────────
-BG       = "#0f0f17"
-SURFACE  = "#1a1a2e"
-CARD     = "#16213e"
-BORDER   = "#2a2a4a"
-ACCENT   = "#7c3aed"
-ACCENT2  = "#a855f7"
-SUCCESS  = "#22c55e"
-ERROR    = "#ef4444"
-TEXT     = "#e2e8f0"
-SUBTEXT  = "#94a3b8"
+BG        = "#0a0a12"
+SURFACE   = "#14141f"
+CARD      = "#181826"
+CARD_HOV  = "#1e1e30"
+BORDER    = "#26263a"
+ACCENT    = "#8b5cf6"
+ACCENT2   = "#a78bfa"
+SUCCESS   = "#22c55e"
+ERROR     = "#f43f5e"
+TEXT      = "#f1f5f9"
+SUBTEXT   = "#8b8ca3"
 
 # ── ICO helpers ────────────────────────────────────────────────────────────────
 def _crop_transparent_padding(img):
@@ -66,51 +66,161 @@ def _save_ico(src, path, dims):
         for header, bgra, and_mask in frames:
             f.write(header); f.write(bgra); f.write(and_mask)
 
-# ── reusable widget helpers ────────────────────────────────────────────────────
-def _btn(parent, text, cmd, bg=ACCENT, fg=TEXT, **kw):
-    b = Label(parent, text=text, bg=bg, fg=fg,
-              font=("Segoe UI", 10, "bold"), cursor="hand2",
-              padx=18, pady=8, **kw)
-    b.bind("<Button-1>", lambda e: cmd())
-    b.bind("<Enter>",    lambda e: b.config(bg=ACCENT2))
-    b.bind("<Leave>",    lambda e: b.config(bg=bg))
-    return b
+def _unique_path(path):
+    """Never silently clobber an existing file (including the source itself)."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    n = 1
+    while True:
+        candidate = f"{base} ({n}){ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        n += 1
 
-def _entry(parent, var, placeholder="", width=8):
-    e = Entry(parent, textvariable=var, width=width,
-              bg=CARD, fg=TEXT, insertbackground=TEXT,
-              relief="flat", font=("Segoe UI", 10),
-              highlightthickness=1, highlightbackground=BORDER,
-              highlightcolor=ACCENT)
-    if placeholder and not var.get():
-        e.insert(0, placeholder)
-        e.config(fg=SUBTEXT)
-        def _focus_in(ev):
-            if e.get() == placeholder:
-                e.delete(0, END); e.config(fg=TEXT)
-        def _focus_out(ev):
-            if not e.get():
-                e.insert(0, placeholder); e.config(fg=SUBTEXT)
-        e.bind("<FocusIn>",  _focus_in)
-        e.bind("<FocusOut>", _focus_out)
-    return e
+# ── rounded-rect canvas button ────────────────────────────────────────────────
+def _round_rect_points(x1, y1, x2, y2, r):
+    r = max(0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    return [
+        x1 + r, y1,  x2 - r, y1,  x2, y1,  x2, y1 + r,
+        x2, y2 - r,  x2, y2,  x2 - r, y2,  x1 + r, y2,
+        x1, y2,  x1, y2 - r,  x1, y1 + r,  x1, y1,
+    ]
+
+class RoundedButton(Canvas):
+    def __init__(self, parent, text, command, fill=ACCENT, hover=ACCENT2,
+                 fg=TEXT, height=38, radius=10, font=("Segoe UI", 10, "bold")):
+        super().__init__(parent, bg=parent["bg"], highlightthickness=0, height=height, bd=0)
+        self.command   = command
+        self.text      = text
+        self.fill      = fill
+        self.hover     = hover
+        self.fg        = fg
+        self.radius    = radius
+        self.font      = font
+        self._enabled  = True
+        self._shape    = None
+        self.configure(cursor="hand2")
+        self.bind("<Configure>", self._draw)
+        self.bind("<Button-1>",  self._on_click)
+        self.bind("<Enter>",     lambda e: self._enabled and self._shape and
+                                  self.itemconfig(self._shape, fill=self.hover))
+        self.bind("<Leave>",     lambda e: self._enabled and self._shape and
+                                  self.itemconfig(self._shape, fill=self.fill))
+
+    def _draw(self, event=None):
+        self.delete("all")
+        w = self.winfo_width() or 140
+        h = self.winfo_height()
+        fill = self.fill if self._enabled else BORDER
+        fg   = self.fg if self._enabled else SUBTEXT
+        pts  = _round_rect_points(1, 1, w - 1, h - 1, self.radius)
+        self._shape = self.create_polygon(pts, smooth=True, fill=fill, outline="")
+        self.create_text(w / 2, h / 2, text=self.text, fill=fg, font=self.font)
+
+    def _on_click(self, event):
+        if self._enabled and self.command:
+            self.command()
+
+    def set_text(self, text):
+        self.text = text
+        self._draw()
+
+    def set_style(self, fill, hover=None):
+        self.fill  = fill
+        self.hover = hover or fill
+        self._draw()
+
+    def set_enabled(self, enabled):
+        self._enabled = enabled
+        self.configure(cursor="hand2" if enabled else "arrow")
+        self._draw()
+
+# ── placeholder-aware entry ───────────────────────────────────────────────────
+class PlaceholderEntry(Entry):
+    """Tracks placeholder state explicitly instead of comparing text, so a
+    real value that happens to match the placeholder string is never mistaken
+    for 'empty'."""
+    def __init__(self, parent, var, placeholder="", width=8, **kw):
+        self._var         = var
+        self._placeholder = placeholder
+        self._is_placeholder = False
+        super().__init__(parent, textvariable=var, width=width,
+                          bg=CARD, fg=TEXT, insertbackground=TEXT,
+                          relief="flat", font=("Segoe UI", 10),
+                          highlightthickness=1, highlightbackground=BORDER,
+                          highlightcolor=ACCENT, **kw)
+        if placeholder and not var.get():
+            self._show_placeholder()
+        self.bind("<FocusIn>",  self._focus_in)
+        self.bind("<FocusOut>", self._focus_out)
+
+    def _show_placeholder(self):
+        self._is_placeholder = True
+        self._var.set(self._placeholder)
+        self.config(fg=SUBTEXT)
+
+    def _focus_in(self, event):
+        if self._is_placeholder:
+            self._var.set("")
+            self.config(fg=TEXT)
+            self._is_placeholder = False
+
+    def _focus_out(self, event):
+        if not self._var.get():
+            self._show_placeholder()
+
+    def value(self):
+        return "" if self._is_placeholder else self._var.get().strip()
+
+    def set_value(self, text):
+        self._is_placeholder = False
+        self.config(fg=TEXT)
+        self._var.set(text)
+
+# ── hover tooltip (used to surface conversion errors) ─────────────────────────
+class ToolTip:
+    def __init__(self, widget, text_getter):
+        self.widget = widget
+        self.text_getter = text_getter
+        self.tip = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+
+    def _show(self, event):
+        text = self.text_getter()
+        if not text:
+            return
+        x = self.widget.winfo_rootx() + 10
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        Label(self.tip, text=text, bg="#20202f", fg=ERROR, font=("Segoe UI", 8),
+              padx=8, pady=5, wraplength=280, justify="left",
+              highlightthickness=1, highlightbackground=BORDER).pack()
+
+    def _hide(self, event):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
 
 # ── file card ──────────────────────────────────────────────────────────────────
 class FileCard(Frame):
     def __init__(self, parent, filepath, remove_cb):
-        super().__init__(parent, bg=CARD, pady=6, padx=10)
+        super().__init__(parent, bg=CARD, pady=8, padx=0)
         self.filepath  = filepath
-        self._progress = 0
+        self.error_msg = None
 
         name = os.path.basename(filepath)
         try:
             size = f"{os.path.getsize(filepath)/1024:.1f} KB"
-        except Exception:
+        except OSError:
             size = ""
 
-        # icon dot
-        Label(self, text="●", bg=CARD, fg=ACCENT,
-              font=("Segoe UI", 8)).pack(side=LEFT, padx=(0, 8))
+        # status accent bar
+        self.accent = Frame(self, bg=SUBTEXT, width=3)
+        self.accent.pack(side=LEFT, fill=Y, padx=(0, 10))
 
         info = Frame(self, bg=CARD)
         info.pack(side=LEFT, fill=X, expand=True)
@@ -122,22 +232,27 @@ class FileCard(Frame):
 
         # thin progress bar
         self.bar_bg = Frame(self, bg=BORDER, height=3)
-        self.bar_bg.pack(side=BOTTOM, fill=X, pady=(4, 0))
+        self.bar_bg.pack(side=BOTTOM, fill=X, pady=(6, 0))
         self.bar    = Frame(self.bar_bg, bg=ACCENT, height=3, width=0)
         self.bar.place(x=0, y=0, relheight=1, relwidth=0)
 
-        Label(self, text="✕", bg=CARD, fg=SUBTEXT,
-              font=("Segoe UI", 10), cursor="hand2").pack(side=RIGHT, padx=(8, 0))
-        self.children[list(self.children)[-1]].bind(
-            "<Button-1>", lambda e: remove_cb(self))
+        self.close_btn = Label(self, text="✕", bg=CARD, fg=SUBTEXT,
+                                font=("Segoe UI", 10), cursor="hand2", padx=4)
+        self.close_btn.pack(side=RIGHT, padx=(8, 10))
+        self.close_btn.bind("<Button-1>", lambda e: remove_cb(self))
+        self.close_btn.bind("<Enter>", lambda e: self.close_btn.config(fg=ERROR))
+        self.close_btn.bind("<Leave>", lambda e: self.close_btn.config(fg=SUBTEXT))
 
-        self.pack(fill=X, pady=2)
+        ToolTip(self, lambda: self.error_msg)
+
+        self.pack(fill=X, pady=3)
 
     def set_progress(self, pct, state="converting"):
         color = SUCCESS if state == "done" else ERROR if state == "error" else ACCENT2
         self.bar.place(relwidth=pct / 100)
         self.bar.config(bg=color)
-        label = "✓ Done" if state == "done" else "✗ Error" if state == "error" else f"{pct:.0f}%"
+        self.accent.config(bg=color)
+        label = "✓ Done" if state == "done" else "✗ Error — hover for details" if state == "error" else f"{pct:.0f}%"
         self.sub.config(text=label, fg=color)
 
 # ── main app ───────────────────────────────────────────────────────────────────
@@ -145,16 +260,17 @@ class ImageConverterApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Kairos Image Converter")
-        self.geometry("860x620")
+        self.geometry("880x640")
         self.minsize(640, 480)
         self.configure(bg=BG)
         self.cards: list[FileCard] = []
+        self._converting    = False
+        self._cancel_event  = threading.Event()
         self._build_ui()
-        self.bind("<Configure>", self._on_resize)
 
     # ── layout ─────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        self.columnconfigure(0, weight=0, minsize=240)
+        self.columnconfigure(0, weight=0, minsize=250)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
@@ -162,52 +278,54 @@ class ImageConverterApp(TkinterDnD.Tk):
         self._build_main()
 
     def _build_sidebar(self):
-        sb = Frame(self, bg=SURFACE, width=240)
+        sb = Frame(self, bg=SURFACE, width=250)
         sb.grid(row=0, column=0, sticky="nsew")
         sb.grid_propagate(False)
         sb.columnconfigure(0, weight=1)
 
         # logo / title
         Label(sb, text="⚡ Kairos", bg=SURFACE, fg=ACCENT,
-              font=("Segoe UI", 16, "bold")).pack(pady=(24, 2))
+              font=("Segoe UI", 17, "bold")).pack(pady=(26, 2))
         Label(sb, text="Image Converter", bg=SURFACE, fg=SUBTEXT,
-              font=("Segoe UI", 9)).pack(pady=(0, 20))
+              font=("Segoe UI", 9)).pack(pady=(0, 22))
 
-        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(0, 20))
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=18, pady=(0, 18))
 
         def section(label):
             Label(sb, text=label.upper(), bg=SURFACE, fg=SUBTEXT,
-                  font=("Segoe UI", 7, "bold")).pack(anchor="w", padx=16, pady=(12, 4))
+                  font=("Segoe UI", 7, "bold")).pack(anchor="w", padx=18, pady=(12, 5))
 
         # format
         section("Output Format")
         self.fmt_var = StringVar(value="JPEG")
         fmt_frame = Frame(sb, bg=SURFACE)
-        fmt_frame.pack(fill=X, padx=16)
+        fmt_frame.pack(fill=X, padx=18)
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("S.TCombobox", fieldbackground=CARD, background=CARD,
                         foreground=TEXT, selectbackground=CARD, selectforeground=TEXT,
-                        arrowcolor=ACCENT)
+                        arrowcolor=ACCENT, bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD)
         cb = ttk.Combobox(fmt_frame, textvariable=self.fmt_var, values=FORMATS,
                           state="readonly", style="S.TCombobox")
-        cb.pack(fill=X)
+        cb.pack(fill=X, ipady=3)
 
         # resize
         section("Resize (px)")
         resize_row = Frame(sb, bg=SURFACE)
-        resize_row.pack(fill=X, padx=16)
+        resize_row.pack(fill=X, padx=18)
         self.width_var  = StringVar()
         self.height_var = StringVar()
-        _entry(resize_row, self.width_var,  "W").pack(side=LEFT, fill=X, expand=True, padx=(0,4))
+        self.width_entry  = PlaceholderEntry(resize_row, self.width_var, "W")
+        self.width_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 4), ipady=4)
         Label(resize_row, text="×", bg=SURFACE, fg=SUBTEXT,
               font=("Segoe UI", 11)).pack(side=LEFT)
-        _entry(resize_row, self.height_var, "H").pack(side=LEFT, fill=X, expand=True, padx=(4,0))
+        self.height_entry = PlaceholderEntry(resize_row, self.height_var, "H")
+        self.height_entry.pack(side=LEFT, fill=X, expand=True, padx=(4, 0), ipady=4)
 
         # quality
         section("Quality")
         q_row = Frame(sb, bg=SURFACE)
-        q_row.pack(fill=X, padx=16)
+        q_row.pack(fill=X, padx=18)
         self.quality_var = IntVar(value=85)
         self.q_label = Label(q_row, text="85", bg=SURFACE, fg=ACCENT,
                              font=("Segoe UI", 10, "bold"), width=3)
@@ -223,29 +341,31 @@ class ImageConverterApp(TkinterDnD.Tk):
         section("Output Folder")
         self.out_var = StringVar(value="")
         out_row = Frame(sb, bg=SURFACE)
-        out_row.pack(fill=X, padx=16)
-        _entry(out_row, self.out_var, "Same as source", width=14).pack(
-            side=LEFT, fill=X, expand=True, padx=(0, 4))
+        out_row.pack(fill=X, padx=18)
+        self.out_entry = PlaceholderEntry(out_row, self.out_var, "Same as source", width=14)
+        self.out_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 4), ipady=4)
         folder_btn = Label(out_row, text="📁", bg=SURFACE, fg=ACCENT,
               font=("Segoe UI", 12), cursor="hand2")
         folder_btn.pack(side=LEFT)
         folder_btn.bind("<Button-1>", lambda e: self._browse_output())
 
-        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=20)
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=18, pady=22)
 
         # action buttons
-        _btn(sb, "▶  Convert All", self._start_conversion).pack(
-            fill=X, padx=16, pady=(0, 8))
-        _btn(sb, "✕  Clear All", self._clear,
-             bg=CARD).pack(fill=X, padx=16)
+        self.convert_btn = RoundedButton(sb, "▶  Convert All", self._start_conversion,
+                                          fill=ACCENT, hover=ACCENT2)
+        self.convert_btn.pack(fill=X, padx=18, pady=(0, 10))
+        self.clear_btn = RoundedButton(sb, "✕  Clear All", self._clear,
+                                        fill=CARD, hover=CARD_HOV)
+        self.clear_btn.pack(fill=X, padx=18)
 
         # status counts
         self.stat_loaded    = StringVar(value="0")
         self.stat_converted = StringVar(value="0")
         self.stat_failed    = StringVar(value="0")
-        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=20)
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=18, pady=22)
         stats = Frame(sb, bg=SURFACE)
-        stats.pack(fill=X, padx=16)
+        stats.pack(fill=X, padx=18)
         for label, var, color in [
             ("Loaded",    self.stat_loaded,    TEXT),
             ("Converted", self.stat_converted, SUCCESS),
@@ -323,24 +443,24 @@ class ImageConverterApp(TkinterDnD.Tk):
         Label(prog_frame, textvariable=self.status_var, bg=BG, fg=SUBTEXT,
               font=("Segoe UI", 8)).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-    # ── responsiveness ─────────────────────────────────────────────────────────
-    def _on_resize(self, event):
-        if event.widget is self:
-            # sidebar stays fixed at 240, main panel takes the rest
-            pass  # grid weights handle it automatically
-
     def _drop_hover(self, active):
+        if self._converting:
+            return
         color = ACCENT if active else BORDER
         self.drop_frame.config(highlightbackground=color)
         self.drop_label.config(fg=ACCENT2 if active else ACCENT)
 
     # ── file management ────────────────────────────────────────────────────────
     def _on_drop(self, event):
+        if self._converting:
+            return
         paths = self.tk.splitlist(event.data)
         self._add_files([p for p in paths if os.path.isfile(p)])
         self._drop_hover(False)
 
     def _browse(self):
+        if self._converting:
+            return
         paths = filedialog.askopenfilenames(
             filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp *.tiff *.gif *.heic *.heif")])
         self._add_files(paths)
@@ -348,7 +468,7 @@ class ImageConverterApp(TkinterDnD.Tk):
     def _browse_output(self):
         d = filedialog.askdirectory()
         if d:
-            self.out_var.set(d)
+            self.out_entry.set_value(d)
 
     def _add_files(self, paths):
         existing = {c.filepath for c in self.cards}
@@ -356,14 +476,19 @@ class ImageConverterApp(TkinterDnD.Tk):
             if p not in existing:
                 card = FileCard(self.card_frame, p, self._remove_card)
                 self.cards.append(card)
+                existing.add(p)
         self._update_stats()
 
     def _remove_card(self, card):
+        if self._converting:
+            return
         card.destroy()
         self.cards.remove(card)
         self._update_stats()
 
     def _clear(self):
+        if self._converting:
+            return
         for c in self.cards:
             c.destroy()
         self.cards.clear()
@@ -376,36 +501,63 @@ class ImageConverterApp(TkinterDnD.Tk):
 
     # ── conversion ─────────────────────────────────────────────────────────────
     def _start_conversion(self):
+        if self._converting:
+            # button is currently in "Cancel" mode
+            self._cancel_event.set()
+            self.status_var.set("Cancelling…")
+            return
+
         if not self.cards:
             messagebox.showwarning("No files", "Please add images first.")
             return
-        threading.Thread(target=self._convert_all, daemon=True).start()
 
-    def _convert_all(self):
-        fmt     = self.fmt_var.get()
-        quality = self.quality_var.get()
-        total   = len(self.cards)
-        done    = 0
-        failed  = 0
-
+        w_str = self.width_entry.value()
+        h_str = self.height_entry.value()
         try:
-            w = int(self.width_var.get())  if self.width_var.get().strip()  not in ("", "W") else None
-            h = int(self.height_var.get()) if self.height_var.get().strip() not in ("", "H") else None
+            w = int(w_str) if w_str else None
+            h = int(h_str) if h_str else None
         except ValueError:
             messagebox.showerror("Invalid input", "Width and Height must be integers.")
             return
 
-        for i, card in enumerate(self.cards):
+        self._converting   = True
+        self._cancel_event = threading.Event()
+        self.convert_btn.set_text("⏹  Cancel")
+        self.convert_btn.set_style(ERROR, "#ff6b81")
+        self.clear_btn.set_enabled(False)
+        self._drop_hover(False)
+        self.drop_label.config(text="Conversion in progress…", fg=SUBTEXT)
+        self.drop_frame.config(cursor="arrow")
+        self.stat_converted.set("0")
+        self.stat_failed.set("0")
+
+        threading.Thread(target=self._convert_all, args=(w, h), daemon=True).start()
+
+    def _convert_all(self, w, h):
+        fmt     = self.fmt_var.get()
+        quality = self.quality_var.get()
+        cards   = list(self.cards)
+        total   = len(cards)
+        done    = 0
+        failed  = 0
+        cancelled = False
+        out_dir_setting = self.out_entry.value()
+
+        for i, card in enumerate(cards):
+            if self._cancel_event.is_set():
+                cancelled = True
+                break
+
             path = card.filepath
             try:
-                out_dir = self.out_var.get() if self.out_var.get() not in ("", "Same as source") \
-                          else os.path.dirname(path)
+                out_dir = out_dir_setting or os.path.dirname(path)
                 os.makedirs(out_dir, exist_ok=True)
                 name    = os.path.splitext(os.path.basename(path))[0]
                 ext     = fmt.lower().replace("jpeg", "jpg")
-                out_path = os.path.join(out_dir, f"{name}.{ext}")
+                out_path = _unique_path(os.path.join(out_dir, f"{name}.{ext}"))
 
                 img = Image.open(path)
+                img.load()  # decode now and release the source file handle
 
                 if fmt == "ICO":
                     img = img.convert("RGBA")
@@ -423,9 +575,10 @@ class ImageConverterApp(TkinterDnD.Tk):
                     _save_ico(img, out_path, dims)
                 else:
                     if img.mode in ("RGBA", "P") and fmt in ("JPEG", "HEIC"):
-                        bg = Image.new("RGB", img.size, (255, 255, 255))
-                        bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[3])
-                        img = bg
+                        rgba = img.convert("RGBA")
+                        bg   = Image.new("RGB", img.size, (255, 255, 255))
+                        bg.paste(rgba, mask=rgba.split()[3])
+                        img  = bg
                     if w or h:
                         orig_w, orig_h = img.size
                         new_w = w or int(orig_w * h / orig_h)
@@ -436,18 +589,35 @@ class ImageConverterApp(TkinterDnD.Tk):
                     img.save(out_path, fmt, **save_kw)
 
                 done += 1
-                card.set_progress(100, "done")
+                self.after(0, card.set_progress, 100, "done")
 
             except Exception as e:
                 failed += 1
-                card.set_progress(100, "error")
+                self.after(0, self._mark_error, card, str(e))
 
-            self.progress["value"] = (i + 1) / total * 100
-            self.status_var.set(f"Converting {i+1}/{total}…")
-            self.stat_converted.set(str(done))
-            self.stat_failed.set(str(failed))
+            pct = (i + 1) / total * 100
+            self.after(0, self._update_progress, pct, i + 1, total, done, failed)
 
-        self.status_var.set(f"Done — {done} converted, {failed} failed")
+        self.after(0, self._on_conversion_done, done, failed, cancelled)
+
+    def _mark_error(self, card, msg):
+        card.error_msg = msg
+        card.set_progress(100, "error")
+
+    def _update_progress(self, pct, i, total, done, failed):
+        self.progress["value"] = pct
+        self.status_var.set(f"Converting {i}/{total}…")
+        self.stat_converted.set(str(done))
+        self.stat_failed.set(str(failed))
+
+    def _on_conversion_done(self, done, failed, cancelled):
+        self._converting = False
+        self.convert_btn.set_text("▶  Convert All")
+        self.convert_btn.set_style(ACCENT, ACCENT2)
+        self.clear_btn.set_enabled(True)
+        self.drop_label.config(text="⬇   Drop images here   ⬇\nor click to browse", fg=ACCENT)
+        self.drop_frame.config(cursor="hand2")
+        self.status_var.set("Cancelled" if cancelled else f"Done — {done} converted, {failed} failed")
 
 if __name__ == "__main__":
     app = ImageConverterApp()

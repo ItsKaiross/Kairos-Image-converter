@@ -4,7 +4,7 @@ import struct
 from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
-from PIL import Image
+from PIL import Image, ImageTk
 from pillow_heif import register_heif_opener
 
 register_heif_opener()
@@ -69,6 +69,21 @@ def _save_ico(src, path, dims):
             offset += data_size
         for header, bgra, and_mask in frames:
             f.write(header); f.write(bgra); f.write(and_mask)
+
+def _load_logo_photo(master, size=34, bg_rgb=(0x14, 0x14, 0x1f)):
+    """Square app-icon glyph, cropped to its opaque bounds and composited
+    onto the sidebar background so it reads cleanly at small sizes."""
+    try:
+        im = Image.open(ICON_PNG).convert("RGBA")
+        bbox = im.getchannel("A").getbbox()
+        if bbox:
+            im = im.crop(bbox)
+        im = im.resize((size, size), Image.LANCZOS)
+        flat = Image.new("RGB", im.size, bg_rgb)
+        flat.paste(im, mask=im.split()[3])
+        return ImageTk.PhotoImage(flat, master=master)
+    except Exception:
+        return None
 
 def _unique_path(path):
     """Never silently clobber an existing file (including the source itself)."""
@@ -300,8 +315,13 @@ class ImageConverterApp(TkinterDnD.Tk):
         sb.columnconfigure(0, weight=1)
 
         # logo / title
-        Label(sb, text="⚡ Kairos", bg=SURFACE, fg=ACCENT,
-              font=("Segoe UI", 17, "bold")).pack(pady=(26, 2))
+        logo_row = Frame(sb, bg=SURFACE)
+        logo_row.pack(pady=(26, 2))
+        self._logo_img = _load_logo_photo(self, size=34)
+        if self._logo_img:
+            Label(logo_row, image=self._logo_img, bg=SURFACE).pack(side=LEFT, padx=(0, 8))
+        Label(logo_row, text="Kairos", bg=SURFACE, fg=ACCENT,
+              font=("Segoe UI", 17, "bold")).pack(side=LEFT)
         Label(sb, text="Image Converter", bg=SURFACE, fg=SUBTEXT,
               font=("Segoe UI", 9)).pack(pady=(0, 22))
 

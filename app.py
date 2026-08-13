@@ -305,6 +305,18 @@ class ImageConverterApp(TkinterDnD.Tk):
         style.configure("S.TCombobox", fieldbackground=CARD, background=CARD,
                         foreground=TEXT, selectbackground=CARD, selectforeground=TEXT,
                         arrowcolor=ACCENT, bordercolor=BORDER, lightcolor=CARD, darkcolor=CARD)
+        style.map("S.TCombobox",
+                  fieldbackground=[("readonly", CARD)],
+                  foreground=[("readonly", TEXT)],
+                  selectbackground=[("readonly", CARD)],
+                  selectforeground=[("readonly", TEXT)])
+        # the popdown list is a plain Listbox that ignores ttk styles entirely —
+        # it must be themed through the Tk option database instead.
+        self.option_add("*TCombobox*Listbox.background", CARD)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", TEXT)
+        self.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
         cb = ttk.Combobox(fmt_frame, textvariable=self.fmt_var, values=FORMATS,
                           state="readonly", style="S.TCombobox")
         cb.pack(fill=X, ipady=3)

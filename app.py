@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import struct
 from tkinter import *
@@ -12,7 +13,7 @@ register_heif_opener()
 FORMATS   = ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "HEIC", "ICO"]
 ICO_SIZES = [256, 128, 64, 48, 32, 16]
 
-APP_DIR   = os.path.dirname(os.path.abspath(__file__))
+APP_DIR   = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 ICON_ICO  = os.path.join(APP_DIR, "kairos_icon.ico")
 ICON_PNG  = os.path.join(APP_DIR, "kairos_icon.png")
 

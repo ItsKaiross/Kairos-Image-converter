@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('kairos_icon.ico', '.'), ('kairos_icon.png', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

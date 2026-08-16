@@ -670,4 +670,5 @@ class ImageConverterApp(TkinterDnD.Tk):
 
 if __name__ == "__main__":
     app = ImageConverterApp()
+    app.iconbitmap("kairos_icon.ico")
     app.mainloop()

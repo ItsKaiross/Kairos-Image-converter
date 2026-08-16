@@ -10,6 +10,13 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
+if sys.platform == "win32":
+    import ctypes
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Kairos.ImageConverter")
+    except Exception:
+        pass
+
 FORMATS   = ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF", "HEIC", "ICO"]
 ICO_SIZES = [256, 128, 64, 48, 32, 16]
 
@@ -295,10 +302,79 @@ class ImageConverterApp(TkinterDnD.Tk):
         except Exception:
             pass
         try:
-            self._icon_img = PhotoImage(file=ICON_PNG)
+            im = Image.open(ICON_PNG).convert("RGBA")
+            bbox = im.getchannel("A").getbbox()
+            if bbox:
+                im = im.crop(bbox)
+            side = max(im.size)
+            square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            square.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+            self._icon_img = ImageTk.PhotoImage(square)
             self.iconphoto(True, self._icon_img)
         except Exception:
             pass
+        if sys.platform == "win32":
+            try:
+                self._set_win32_icon_direct()
+            except Exception:
+                pass
+            # The Windows taskbar button grabs its icon at window-creation
+            # time and won't live-refresh from a later WM_SETICON; forcing
+            # a hide/show cycle makes it re-register with the current icon.
+            self.withdraw()
+            self.after(50, self.deiconify)
+
+    def _set_win32_icon_direct(self):
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
+                                       ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        user32.SendMessageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        user32.SetClassLongPtrW.restype = ctypes.c_void_p
+        user32.SetClassLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x10
+        WM_SETICON = 0x0080
+        ICON_SMALL, ICON_BIG = 0, 1
+        GCLP_HICON, GCLP_HICONSM = -14, -34
+
+        self.update_idletasks()
+
+        # self.winfo_id() can return an embedded child HWND rather than the
+        # real top-level window Windows puts in the taskbar; find the actual
+        # TkTopLevel HWND for this process instead.
+        my_pid = kernel32.GetCurrentProcessId()
+        toplevel_hwnd = None
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _cb(h, lparam):
+            nonlocal toplevel_hwnd
+            wpid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(h, ctypes.byref(wpid))
+            if wpid.value == my_pid and user32.IsWindowVisible(h):
+                b = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(h, b, 256)
+                if b.value == "TkTopLevel":
+                    toplevel_hwnd = h
+                    return False
+            return True
+        user32.EnumWindows(EnumWindowsProc(_cb), 0)
+
+        hwnd = ctypes.c_void_p(toplevel_hwnd if toplevel_hwnd else self.winfo_id())
+
+        hicon_big = user32.LoadImageW(None, ICON_ICO, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+        hicon_small = user32.LoadImageW(None, ICON_ICO, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            user32.SetClassLongPtrW(hwnd, GCLP_HICON, hicon_big)
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+            user32.SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon_small)
 
     # ── layout ─────────────────────────────────────────────────────────────────
     def _build_ui(self):

@@ -2,6 +2,7 @@ import os
 import sys
 import threading
 import struct
+
 from tkinter import *
 from tkinter import ttk, filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
